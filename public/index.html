@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IoT 数据可视化面板</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { font-size: 24px; color: #fff; }
+    .status {
+      display: flex; gap: 16px; font-size: 13px; color: #aaa;
+    }
+    .status .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-right: 6px; vertical-align: middle;
+    }
+    .status .dot.online { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+    .status .dot.offline { background: #f87171; }
+
+    .cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px; margin-bottom: 24px;
+    }
+    .card {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px; padding: 20px; backdrop-filter: blur(10px);
+    }
+    .card .label { font-size: 13px; color: #94a3b8; margin-bottom: 8px; }
+    .card .value { font-size: 28px; font-weight: 600; color: #fff; }
+    .card .unit { font-size: 14px; color: #94a3b8; margin-left: 4px; }
+    .card.temp .value { color: #fb923c; }
+    .card.hum .value { color: #60a5fa; }
+
+    .chart-area {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px; padding: 20px;
+    }
+    .chart-area h2 { font-size: 16px; color: #cbd5e1; margin-bottom: 16px; }
+    .chart-container { position: relative; height: 360px; }
+
+    footer { margin-top: 24px; font-size: 12px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🌡️ IoT 温度 / 湿度 实时监控</h1>
+    <div class="status">
+      <span><span id="connDot" class="dot offline"></span><span id="connText">连接中...</span></span>
+      <span>设备: <span id="deviceId">—</span></span>
+      <span>已上报: <span id="pubCount">0</span> 条</span>
+    </div>
+  </header>
+
+  <section class="cards">
+    <div class="card temp">
+      <div class="label">当前温度</div>
+      <div><span id="tempVal" class="value">—</span><span class="unit">°C</span></div>
+    </div>
+    <div class="card hum">
+      <div class="label">当前湿度</div>
+      <div><span id="humVal" class="value">—</span><span class="unit">%</span></div>
+    </div>
+    <div class="card">
+      <div class="label">最新上报时间</div>
+      <div><span id="tsVal" class="value" style="font-size:18px">—</span></div>
+    </div>
+    <div class="card">
+      <div class="label">缓存条数</div>
+      <div><span id="bufVal" class="value">0</span></div>
+    </div>
+  </section>
+
+  <section class="chart-area">
+    <h2>📈 历史趋势（最近 200 条，每 2 秒采样）</h2>
+    <div class="chart-container">
+      <canvas id="chart"></canvas>
+    </div>
+  </section>
+
+  <footer>Express + MQTT + Chart.js · 自动轮询刷新</footer>
+
+  <script>
+    // ---------- 初始化 Chart ----------
+    const ctx = document.getElementById('chart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: '温度 (°C)',
+            data: [],
+            borderColor: '#fb923c',
+            backgroundColor: 'rgba(251,146,60,0.15)',
+            tension: 0.35,
+            pointRadius: 2,
+            borderWidth: 2,
+            yAxisID: 'y',
+          },
+          {
+            label: '湿度 (%)',
+            data: [],
+            borderColor: '#60a5fa',
+            backgroundColor: 'rgba(96,165,250,0.15)',
+            tension: 0.35,
+            pointRadius: 2,
+            borderWidth: 2,
+            yAxisID: 'y1',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#cbd5e1' } },
+          tooltip: { backgroundColor: 'rgba(15,23,42,0.9)' },
+        },
+        scales: {
+          x: {
+            ticks: { color: '#94a3b8', maxTicksLimit: 8 },
+            grid: { color: 'rgba(255,255,255,0.06)' },
+          },
+          y: {
+            position: 'left',
+            title: { display: true, text: '温度 (°C)', color: '#fb923c' },
+            ticks: { color: '#fb923c' },
+            grid: { color: 'rgba(251,146,60,0.08)' },
+          },
+          y1: {
+            position: 'right',
+            title: { display: true, text: '湿度 (%)', color: '#60a5fa' },
+            ticks: { color: '#60a5fa' },
+            grid: { drawOnChartArea: false },
+          },
+        },
+      },
+    });
+
+    // ---------- 轮询更新 ----------
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+    }
+
+    async function refresh() {
+      try {
+        const [dataRes, statusRes] = await Promise.all([
+          fetch('/api/data'),
+          fetch('/api/status'),
+        ]);
+        if (!dataRes.ok || !statusRes.ok) throw new Error('API error');
+
+        const records = await dataRes.json();
+        const status = await statusRes.json();
+
+        // 状态
+        document.getElementById('connDot').className = 'dot ' + (status.connected ? 'online' : 'offline');
+        document.getElementById('connText').textContent = status.connected ? 'MQTT 已连接' : 'MQTT 未连接';
+        document.getElementById('pubCount').textContent = status.publishedCount;
+        document.getElementById('bufVal').textContent = status.bufferedRecords;
+
+        if (records.length === 0) return;
+        const latest = records[records.length - 1];
+        document.getElementById('deviceId').textContent = latest.deviceId;
+        document.getElementById('tempVal').textContent = latest.temperature.toFixed(2);
+        document.getElementById('humVal').textContent = latest.humidity.toFixed(2);
+        document.getElementById('tsVal').textContent = fmtTime(latest.ts);
+
+        // 图表（只显示最近 60 条避免拥挤）
+        const tail = records.slice(-60);
+        chart.data.labels = tail.map(r => fmtTime(r.ts));
+        chart.data.datasets[0].data = tail.map(r => r.temperature);
+        chart.data.datasets[1].data = tail.map(r => r.humidity);
+        chart.update('none');
+      } catch (e) {
+        console.warn('刷新失败:', e);
+        document.getElementById('connDot').className = 'dot offline';
+        document.getElementById('connText').textContent = '服务不可用';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>
